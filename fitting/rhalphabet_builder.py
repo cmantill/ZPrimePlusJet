@@ -275,13 +275,20 @@ class RhalphabetBuilder():
         rhoscaled = (rhopts - (-6)) / ((-2.1) - (-6))
         validbins = (rhoscaled >= 0) & (rhoscaled <= 1)
         validbins[:, 0] = False  # cut msd 40-47
+        #validbins[:, 1] = False 
         if self._blind:
             validbins[:, 10:13] = False  # blind
         rhoscaled[~validbins] = 1  # we will mask these out later
     
         tf_MCtempl = rl.BernsteinPoly("qcdfit_tf_%s" % year, (self._qcdTFpars['n_pT'], self._qcdTFpars['n_rho']), ['pt', 'rho'], limits=(-10, 10))
-        param_names = ['p%dr%d_%s' % (ipt, irho, year) for ipt in range(3) for irho in range(3)]
+        param_names = ['p%dr%d_%s' % (ipt, irho, year) for ipt in range(self._qcdTFpars['n_pT']+1) for irho in range(self._qcdTFpars['n_rho']+1)]
+        print(param_names)
+        names = [p.GetName() for p in qcdfit.floatParsFinal()]
+        print(names)
         decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + '_deco', qcdfit, param_names)
+        print('npt ',self._qcdTFpars['n_pT'], self._qcdTFpars['n_rho'])
+        print(decoVector.correlated_params)
+        print(tf_MCtempl.parameters.shape, tf_MCtempl.parameters)
         tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
         qcdeff = getconst("qcdeff_%s" % year)
         tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
@@ -594,7 +601,6 @@ class RhalphabetBuilder():
 
         print "number of pt bins = ", self._nptbins;
         for pt_bin in range(1, self._nptbins + 1):
-            # for pt_bin in range(1,2):
             print "------- pT bin number ", pt_bin
 
             # 1d histograms in each pT bin (in the order... data, w, z, qcd, top, signals)
@@ -613,9 +619,7 @@ class RhalphabetBuilder():
                                                                                            fail_hists_ptbin,
                                                                                            "cat" + str(pt_bin))
             # Get approximate pt bin value
-            this_pt = self._pass_hists["data_obs"].GetYaxis().GetBinLowEdge(pt_bin) + self._pass_hists[
-                                                                                          "data_obs"].GetYaxis().GetBinWidth(
-                pt_bin) * 0.3;
+            this_pt = self._pass_hists["data_obs"].GetYaxis().GetBinLowEdge(pt_bin) + self._pass_hists["data_obs"].GetYaxis().GetBinWidth(pt_bin) * 0.3;
             print "------- this bin pT value ", this_pt
 
             # Make the rhalphabet fit for this pt bin
@@ -1495,27 +1499,212 @@ def ZeroHistogram1D(h,pt_val,blind,mass_range,blind_range,rho_range):
         massVal = h.GetXaxis().GetBinCenter(i)
         rhoVal = r.TMath.Log(massVal * massVal / pt_val / pt_val)
         if blind and massVal > blind_range[0] and massVal < blind_range[1]:
-            print "blinding signal region for %s, mass bin [%i,%i] " % (h.GetName(), h.GetXaxis().GetBinLowEdge(i), h.GetXaxis().GetBinUpEdge(i))
+            #print "blinding signal region for %s, mass bin [%i,%i] " % (h.GetName(), h.GetXaxis().GetBinLowEdge(i), h.GetXaxis().GetBinUpEdge(i))
             h.SetBinContent(i, 0.)
             h.SetBinError(i, 0.)
         if rhoVal < rho_range[0] or rhoVal > rho_range[1]:
-            print "removing rho = %.2f for %s, pt_val = %.2f, mass bin [%i,%i]" % (rhoVal, h.GetName(), pt_val, h.GetXaxis().GetBinLowEdge(i),h.GetXaxis().GetBinUpEdge(i))
+            #print "removing rho = %.2f for %s, pt_val = %.2f, mass bin [%i,%i]" % (rhoVal, h.GetName(), pt_val, h.GetXaxis().GetBinLowEdge(i),h.GetXaxis().GetBinUpEdge(i))
             h.SetBinContent(i, 0.)
             h.SetBinError(i, 0.)
         if massVal < mass_range[0] or massVal > mass_range[1] :
-            print "removing mass = %.2f for %s, because %.2f not in [%i,%i]" % (massVal,h.GetName(),massVal,mass_range[0], mass_range[1])
+            #print "removing mass = %.2f for %s, because %.2f not in [%i,%i]" % (massVal,h.GetName(),massVal,mass_range[0], mass_range[1])
             h.SetBinContent(i, 0.)
             h.SetBinError(i, 0.)
 
+
+def SmoothHistograms(pass_histograms,fail_histograms,tag='qcd700',rho=4,sigma=1):
+    def getBinning(template):
+        temp_TH2 = template
+        new_bins = []
+        for v in ['X','Y']:
+            if v == 'X':
+                for b in range(1,temp_TH2.GetNbinsX()+1):
+                    new_bins.append(temp_TH2.GetXaxis().GetBinLowEdge(b))
+                    new_bins.append(temp_TH2.GetXaxis().GetXmax())
+                
+            elif v == 'Y':
+                for b in range(1,temp_TH2.GetNbinsY()+1):
+                    new_bins.append(temp_TH2.GetYaxis().GetBinLowEdge(b))
+                    new_bins.append(temp_TH2.GetYaxis().GetXmax())
+            if v == 'X':
+                newXbins = new_bins
+
+            elif v == 'Y':
+                newYbins = new_bins
+
+        return newXbins,newYbins
+
+    def getBinEdges(hist):
+        xedges = []
+        yedges = []
+        for ibin in range(1,hist.GetNbinsX()+1):
+            xedges.append(hist.GetXaxis().GetBinLowEdge(ibin))
+        for ibin in range(1,hist.GetNbinsY()+1):
+            yedges.append(hist.GetYaxis().GetBinLowEdge(ibin))
+                
+        xedges.append(hist.GetXaxis().GetBinUpEdge(hist.GetNbinsX()))
+        yedges.append(hist.GetYaxis().GetBinUpEdge(hist.GetNbinsY()))
+        print('xedges ',xedges)
+
+        return xedges,yedges
+
+    def getRRVs(xbinning,ybinning):
+        # y
+        yname = 'pt'
+        ylow = ybinning[0]
+        yhigh = ybinning[-1]
+        yRRV = r.RooRealVar(yname,yname,ylow,yhigh)
+        yBinArray = array.array('d',ybinning)
+        yRooBinning = r.RooBinning(len(ybinning)-1,yBinArray)
+        yRRV.setBinning(yRooBinning)
+
+        # x
+        xname = 'm'
+        xlow = xbinning[0]
+        xhigh = xbinning[-1]
+        xRRV = r.RooRealVar(xname,xname,xlow,xhigh)
+        xBinArray = array.array('d',xbinning)
+        xRooBinning = r.RooBinning(len(xbinning)-1,xBinArray)
+        xRRV.setBinning(xRooBinning)
+        
+        return xRRV,yRRV
+
+    def getRooBinning(bins):
+        binarray = array.array('d',bins)
+        return r.RooBinning(len(bins)-1,binarray)
+
+
+    h_pass = pass_histograms['qcd']
+    h_fail = fail_histograms['qcd']
+
+    n_pass = h_pass.Integral()
+    n_fail = h_fail.Integral()
+    n_ratio = n_pass/n_fail
+    print 'Ratio of integral(pass)/integral(fail) = %s'%n_ratio
     
+    # binning
+    
+    xbins,ybins = getBinEdges(h_pass)
+    xvar,yvar = getRRVs(xbins,ybins)
+    #bins_converted = getBinning(h_pass)
+    #xbins_out,ybins_out = getRRVs(bins_converted[0],bins_converted[1])
+    genbinsx = xvar
+    genbinsy = yvar
+    drawbinsx = xvar
+    drawbinsy = yvar
+
+    # output
+    outname = 'smooth_QCD_%s_rho%isigma%i.root'%(tag,rho,sigma)
+    out_file = r.TFile.Open(outname,'RECREATE')
+
+    print('xbins ',xbins, 'ybins ', ybins)
+    print('xvar ',xvar, 'yvar ', yvar)
+    #print('bins_converted ', bins_converted)
+    #print('x bins out ', xbins_out, 'y bins ', ybins_out)
+
+    namemod=''
+    pass_rho = rho #4 
+    fail_rho = rho
+    nevents = 10000000
+    print ('Checking pass_rho = %s, fail_rho = %s'%(pass_rho,fail_rho))
+
+    print ('Creating PDF pass...')
+    pdf_pass = r.RooNDKeysPdf('pdf_pass_%s_%s%s'%(pass_rho,sigma,namemod), 'pdf_pass_%s_%s%s'%(pass_rho,sigma,namemod), r.RooArgList(xvar,yvar), h_pass, "ma", pass_rho, sigma, True, True)
+    print ('Done')
+    print ('Creating PDF fail...')
+    pdf_fail = r.RooNDKeysPdf('pdf_fail_%s_%s%s'%(fail_rho,sigma,namemod), 'pdf_fail_%s_%s%s'%(fail_rho,sigma,namemod), r.RooArgList(xvar,yvar), h_fail, "ma", fail_rho, sigma, True, True)
+    print ('Done')
+    
+    print ('Generating pdf_pass_%s_%s...'%(pass_rho,sigma))
+    rdh_pass = pdf_pass.generateBinned(r.RooArgSet(genbinsx,genbinsy),nevents)
+    out_pass = rdh_pass.createHistogram('%sout_pass_%s_%s%s'%(h_pass.GetName(),pass_rho,sigma,namemod),drawbinsx,r.RooFit.YVar(drawbinsy))
+    del rdh_pass
+    print ('Done')
+    print ('Generating pdf_fail_%s_%s...'%(fail_rho,sigma))
+    rdh_fail = pdf_fail.generateBinned(r.RooArgSet(genbinsx,genbinsy),nevents)
+    out_fail = rdh_fail.createHistogram('%sout_fail_%s_%s%s'%(h_pass.GetName(),fail_rho,sigma,namemod),drawbinsx,r.RooFit.YVar(drawbinsy))
+    del rdh_fail
+    print ('Done')
+    
+    out_pass.Scale(n_pass/nevents)
+    out_fail.Scale(n_fail/nevents)
+    
+    out_pass.SetDirectory(0)
+    out_fail.SetDirectory(0)
+
+    out_file.cd()
+
+    hpass_ptbin = {}
+    hfail_ptbin = {}
+    for pt_bin in range(0, len(ybins)):
+        hpass_ptbin[str(pt_bin)] = tools.proj("catp", str(pt_bin), out_pass, len(xbins), xbins[0], xbins[-1])
+        hpass_ptbin[str(pt_bin)].Write()
+    for pt_bin in range(0, len(ybins)):
+        hfail_ptbin[str(pt_bin)] = tools.proj("catf", str(pt_bin), out_fail, len(xbins), xbins[0], xbins[-1])
+        hfail_ptbin[str(pt_bin)].Write()
+
+    out_pass.Write()
+    out_fail.Write()
+    h_pass.Write()
+    h_fail.Write()
+
+    hpass_ptbin_ns = {}
+    hfail_ptbin_ns = {}
+    for pt_bin in range(0, len(ybins)):
+        hpass_ptbin_ns[str(pt_bin)] = tools.proj("catp", str(pt_bin), h_pass, len(xbins), xbins[0], xbins[-1])
+        hpass_ptbin_ns[str(pt_bin)].Write()
+    for pt_bin in range(0, len(ybins)):
+        hfail_ptbin_ns[str(pt_bin)] = tools.proj("catf", str(pt_bin), h_fail, len(xbins), xbins[0], xbins[-1])
+        hfail_ptbin_ns[str(pt_bin)].Write()
+    out_file.Close()
+
+    return out_pass,out_fail,hpass_ptbin,hfail_ptbin,hpass_ptbin_ns,hfail_ptbin_ns
+
+def TestSmoothing(ifiles,rho,sigma):
+    hpass_all = {}
+    hfail_all = {}
+    hpass_all_smooth = {}
+    hfail_all_smooth = {}
+    for tag, ifile in ifiles.iteritems():
+        f_test = r.TFile.Open(ifile)
+        hpass = {}
+        hfail = {}
+        hpass['qcd'] = f_test.Get('qcd_Tpass').Clone('pass'+tag)
+        hfail['qcd'] = f_test.Get('qcd_Tfail').Clone('fail'+tag)
+        hpass['qcd_smooth_'+tag],hfail['qcd_smooth'+tag],hpass_ptbin,hfail_ptbin,hpass_ptbin_ns,hfail_ptbin_ns = SmoothHistograms(hpass,hfail,tag,rho,sigma)
+        for t,k in hpass_ptbin_ns.iteritems():
+            hpass_all['qcd_'+tag+t] = k
+            hpass_all['qcd_'+tag+t].SetDirectory(0)
+        for t,k in hfail_ptbin_ns.iteritems():
+            hfail_all['qcd_'+tag+t] = k
+            hpass_all['qcd_'+tag+t].SetDirectory(0)
+        for t,k in hpass_ptbin.iteritems():
+            hpass_all_smooth['qcd_'+tag+t] = k
+            hpass_all_smooth['qcd_'+tag+t].SetDirectory(0)
+        for t,k in hfail_ptbin.iteritems():
+            hfail_all_smooth['qcd_'+tag+t] = k
+            hpass_all_smooth['qcd_'+tag+t].SetDirectory(0)
+        f_test.Close()
+
+    test_file = r.TFile.Open('test_smooth_rho%isigma%i.root'%(rho,sigma),'RECREATE')
+    for t,k in hpass_all.iteritems():
+        k.Write()
+    for t,k in hfail_all.iteritems():
+        k.Write()
+    for t,k in hpass_all_smooth.iteritems():
+        k.Write()
+    for t,k in hfail_all_smooth.iteritems():
+        k.Write()
+    test_file.Close()
+
 ##-------------------------------------------------------------------------------------
 def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_range, rho_range, fLoose=None,sf_dict={},createPassFromFail=False,skipQCD=False):
     pass_hists = {}
     fail_hists = {}
-    f.ls()
+    #f.ls()
 
-    #qcdkfactor = 0.7
-    qcdkfactor  =1.0
+    qcdkfactor = 0.51
+
     # backgrounds
     pass_hists_bkg = {}
     fail_hists_bkg = {}
@@ -1526,7 +1715,7 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
     for i, bkg in enumerate(background_names):
         if bkg == 'qcd' :
             qcd_fail = f.Get('qcd_fail')
-            qcd_fail.Scale(qcdkfactor)
+            qcd_fail.Scale(qcdkfactor) # scaling normalization by 0.5
             qcd_fail.Scale(1. / scale)
             if useQCD:
                 print "Using QCD MC"
@@ -1548,7 +1737,7 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
                             qcd_pass_real_integral += qcd_pass_real.GetBinContent(i, j)
                             qcd_fail_integral += qcd_fail.GetBinContent(i, j)
                 qcd_pass.Scale(qcd_pass_real_integral / qcd_fail_integral)  # qcd_pass = qcd_fail * eff(pass)/eff(fail)
-            pass_hists_bkg["qcd"] = qcd_pass
+            pass_hists_bkg["qcd"] = qcd_pass # by default qcd_pass = qcd_fail * (P/F)
             fail_hists_bkg["qcd"] = qcd_fail
             print 'qcd pass integral', qcd_pass.Integral()
             print 'qcd fail integral', qcd_fail.Integral()
@@ -1571,6 +1760,11 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
             hfail_tmp.Scale(GetSF(bkg, 'fail', f,sf_dict=sf_dict))
             pass_hists_bkg[bkg] = hpass_tmp
             fail_hists_bkg[bkg] = hfail_tmp
+
+    smooth_pass,smooth_fail,smooth_pass_ptbin,smooth_fail_ptbin = SmoothHistograms(pass_hists_bkg,fail_hists_bkg)
+    pass_hists_bkg['qcd'] = smooth_pass
+    fail_hists_bkg['qcd'] = smooth_fail
+
 
     # signals ( empty for Zbb)
     pass_hists_sig = {}
@@ -1597,6 +1791,7 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
             signal_names.append(sig + str(mass))
 
     if pseudo:
+        print "Creating pseudo template with data_obs = MC"
         for i, bkg in enumerate(background_names):
             if i == 0:
                 pass_hists["data_obs"] = pass_hists_bkg[bkg].Clone('data_obs_pass')
@@ -1625,6 +1820,7 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
         pass_hists["data_obs"] = data_pass 
         fail_hists["data_obs"] = data_obs_fail 
     else:
+        print "Getting data"
         pass_hists["data_obs"] = f.Get('data_obs_pass')
         fail_hists["data_obs"] = f.Get('data_obs_fail')
 
@@ -1641,20 +1837,13 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
                 rhoVal = r.TMath.Log(massVal * massVal / ptVal / ptVal)
                 if blind and histogram.GetXaxis().GetBinCenter(i) > blind_range[
                     0] and histogram.GetXaxis().GetBinCenter(i) < blind_range[1]:
-                    print "blinding signal region for %s, mass bin [%i,%i] " % (
-                    histogram.GetName(), histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
+                    # print "blinding signal region for %s, mass bin [%i,%i] " % (histogram.GetName(), histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
                     histogram.SetBinContent(i, j, 0.)
                 if rhoVal < rho_range[0] or rhoVal > rho_range[1]:
-                    print "removing rho = %.2f for %s, pt bin [%i, %i], mass bin [%i,%i]" % (
-                        rhoVal, histogram.GetName(), histogram.GetYaxis().GetBinLowEdge(j),
-                        histogram.GetYaxis().GetBinUpEdge(j),
-                        histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
+                    # print "removing rho = %.2f for %s, pt bin [%i, %i], mass bin [%i,%i]" % ( rhoVal, histogram.GetName(), histogram.GetYaxis().GetBinLowEdge(j),histogram.GetYaxis().GetBinUpEdge(j),histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
                     histogram.SetBinContent(i, j, 0.)
                 if massVal < mass_range[0] or massVal > mass_range[1]:
-                    print "removing mass = %.2f for %s, pt bin [%i, %i], mass bin [%i,%i]" % (
-                        massVal, histogram.GetName(), histogram.GetYaxis().GetBinLowEdge(j),
-                        histogram.GetYaxis().GetBinUpEdge(j),
-                        histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
+                    # print "removing mass = %.2f for %s, pt bin [%i, %i], mass bin [%i,%i]" % ( massVal, histogram.GetName(), histogram.GetYaxis().GetBinLowEdge(j),histogram.GetYaxis().GetBinUpEdge(j),histogram.GetXaxis().GetBinLowEdge(i), histogram.GetXaxis().GetBinUpEdge(i))
                     histogram.SetBinContent(i, j, 0.)
 
         histogram.SetDirectory(0)
@@ -1665,24 +1854,20 @@ def LoadHistograms(f, pseudo, blind, useQCD, scale, r_signal, mass_range, blind_
 def GetSF(process, cat, f, fLoose=None, removeUnmatched=False, iPt=-1,sf_dict={}):
     SF = 1
     print process, cat
-    BB_SF = sf_dict['BB_SF']
+    BB_SF = sf_dict['BB_SF'] # BB_SF = 1.0
     V_SF  = sf_dict['V_SF']
     if 'hqq' in process or 'zqq' in process or 'Pbb' in process:
         if 'pass' in cat:
             SF *= BB_SF
-            if 'zqq' in process:
-                print BB_SF
         else:
             passInt = f.Get(process + '_pass').Integral()
             failInt = f.Get(process + '_fail').Integral()
             if failInt > 0:
                 SF *= (1. + (1. - BB_SF) * passInt / failInt)
-                if 'zqq' in process:
-                    print (1. + (1. - BB_SF) * passInt / failInt)
     if 'wqq' in process or 'zqq' in process or 'hqq' in process or 'Pbb' in process:
         SF *= V_SF
         if 'zqq' in process:
-            print V_SF
+            print('vqq V_SF',V_SF)
     matchingString = ''
     if removeUnmatched and ('wqq' in process or 'zqq' in process):
         matchingString = '_matched'
@@ -1697,10 +1882,10 @@ def GetSF(process, cat, f, fLoose=None, removeUnmatched=False, iPt=-1,sf_dict={}
         SF *= passInt / passIntLoose
         if 'zqq' in process:
             print passInt / passIntLoose
-    #if 'qcd' in process:
-    #    qcdkfactor =0.78
-    #    print "Applying qcdkfactor = %s"%qcdkfactor
-    #    SF *= qcdkfactor
+    if 'qcd' in process:
+        qcdkfactor = 0.51 # 0.78
+        print "Applying qcdkfactor = %s"%qcdkfactor
+        SF *= qcdkfactor
 
     return SF
 
